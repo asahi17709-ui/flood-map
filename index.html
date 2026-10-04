@@ -80,35 +80,39 @@ let stations=[],homeMarker=null,radarOn=false;
 
 // ---- โทนสีแบบ Apple Maps: พื้นเขียวอ่อน น้ำฟ้า ถนนขาว และเงาภูเขา (หาเลเยอร์จากชื่อ อาจต้องปรับถ้าสีบางส่วนไม่เปลี่ยน) ----
 function appleLook(){
-  if(dark)return;
-  const set=(id,p,v)=>{try{map.setPaintProperty(id,p,v)}catch(e){}};
+  if(dark)return 0;
+  let n=0;
+  const set=(id,p,v)=>{try{map.setPaintProperty(id,p,v);n++}catch(e){}};
+  const BLUE='#9bd6f6';
   let firstLine=null;
   map.getStyle().layers.forEach(l=>{
-    const id=l.id.toLowerCase();
+    const id=l.id.toLowerCase(),sl=(l['source-layer']||'').toLowerCase();
     if(l.type==='line'&&!firstLine)firstLine=l.id;
-    if(l.type==='background')set(l.id,'background-color','#e4f1bf');
-    else if(l.type==='fill'){
-      if(/water/.test(id))set(l.id,'fill-color','#9bd6f6');
-      else if(/park|wood|forest|grass|green|cemetery|garden|pitch|golf|nature|scrub|farm/.test(id))set(l.id,'fill-color','#c8e598');
-      else if(/residential|urban|commercial|industrial|retail/.test(id))set(l.id,'fill-color','#f5f4ec');
-    }
-    else if(l.type==='fill-extrusion')set(l.id,'fill-extrusion-color','#e9e7e0');
+    if(l.type==='background'){set(l.id,'background-color','#e4f1bf');return}
+    if(l.type==='fill'){
+      if(sl==='water'||/water/.test(id))set(l.id,'fill-color',BLUE);
+      else if(sl==='park'||/park|wood|forest|grass|garden|golf/.test(id))set(l.id,'fill-color','#c8e598');
+      else if(sl==='landcover')set(l.id,'fill-color',['match',['get','class'],'wood','#c8e598','grass','#d6ecaa','sand','#f3ecc8','ice','#ffffff','#e4f1bf']);
+      else if(sl==='landuse')set(l.id,'fill-color',['match',['get','class'],'residential','#f5f4ec','commercial','#f5f4ec','industrial','#efeee6','#e9f2c6']);
+      else if(sl==='building'||/building/.test(id))set(l.id,'fill-color','#e9e7e0');
+    }else if(l.type==='fill-extrusion')set(l.id,'fill-extrusion-color','#e9e7e0');
     else if(l.type==='line'){
-      if(/waterway|river|stream|canal/.test(id))set(l.id,'line-color','#9bd6f6');
+      if(sl==='waterway'||/waterway|river|stream|canal/.test(id))set(l.id,'line-color',BLUE);
       else if(/casing/.test(id))set(l.id,'line-color','#c0c5cd');
-      else if(/road|highway|motorway|trunk|primary|secondary|tertiary|street|bridge|tunnel|service/.test(id))set(l.id,'line-color','#ffffff');
+      else if(sl==='transportation'&&!/rail|ferry|aerialway|path|pedestrian|footway|track|steps|cable/.test(id))set(l.id,'line-color','#ffffff');
     }
   });
   map.addLayer({id:'hills',type:'hillshade',source:'dem',paint:{
     'hillshade-exaggeration':0.6,'hillshade-shadow-color':'#4f7a2e',
     'hillshade-highlight-color':'#ffffff','hillshade-accent-color':'#7da24c'}},firstLine||undefined);
+  return n;
 }
 
 const ready=new Promise(res=>map.on('load',()=>{
   map.addSource('dem',{type:'raster-dem',encoding:'terrarium',tileSize:256,maxzoom:14,
     tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png']});
   map.setTerrain(DEM);
-  appleLook();
+  window.paintN=appleLook();
   map.addSource('st',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:'st-dots',type:'circle',source:'st',paint:{
     'circle-radius':9,'circle-stroke-color':'#fff','circle-stroke-width':2,
@@ -152,7 +156,7 @@ async function loadStations(){
     stations=list;await ready;
     map.getSource('st').setData({type:'FeatureCollection',features:stations.map(s=>({type:'Feature',
       geometry:{type:'Point',coordinates:[s.lng,s.lat]},properties:{name:s.name,river:s.river,margin:s.margin,time:s.time,status:s.status}}))});
-    $('stamp').textContent='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' · น้ำ: สสน./ชป. · ฝน: Open-Meteo, RainViewer';
+    $('stamp').textContent='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' · น้ำ: สสน./ชป. · ฝน: Open-Meteo, RainViewer · ปรับสี '+(window.paintN||0)+' ชั้น';
   }catch(e){$('stamp').textContent='โหลดข้อมูลสถานีวัดน้ำไม่สำเร็จ (แผนที่และเรดาร์ยังใช้ได้) จะลองใหม่ใน 5 นาที';}
 }
 

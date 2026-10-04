@@ -78,10 +78,37 @@ const dist=(a,b,c,d)=>{const R=6371,t=x=>x*Math.PI/180,dl=t(c-a),dn=t(d-b);
   const h=Math.sin(dl/2)**2+Math.cos(t(a))*Math.cos(t(c))*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(h))};
 let stations=[],homeMarker=null,radarOn=false;
 
+// ---- โทนสีแบบ Apple Maps: พื้นเขียวอ่อน น้ำฟ้า ถนนขาว และเงาภูเขา (หาเลเยอร์จากชื่อ อาจต้องปรับถ้าสีบางส่วนไม่เปลี่ยน) ----
+function appleLook(){
+  if(dark)return;
+  const set=(id,p,v)=>{try{map.setPaintProperty(id,p,v)}catch(e){}};
+  let firstLine=null;
+  map.getStyle().layers.forEach(l=>{
+    const id=l.id.toLowerCase();
+    if(l.type==='line'&&!firstLine)firstLine=l.id;
+    if(l.type==='background')set(l.id,'background-color','#e4f1bf');
+    else if(l.type==='fill'){
+      if(/water/.test(id))set(l.id,'fill-color','#9bd6f6');
+      else if(/park|wood|forest|grass|green|cemetery|garden|pitch|golf|nature|scrub|farm/.test(id))set(l.id,'fill-color','#c8e598');
+      else if(/residential|urban|commercial|industrial|retail/.test(id))set(l.id,'fill-color','#f5f4ec');
+    }
+    else if(l.type==='fill-extrusion')set(l.id,'fill-extrusion-color','#e9e7e0');
+    else if(l.type==='line'){
+      if(/waterway|river|stream|canal/.test(id))set(l.id,'line-color','#9bd6f6');
+      else if(/casing/.test(id))set(l.id,'line-color','#c0c5cd');
+      else if(/road|highway|motorway|trunk|primary|secondary|tertiary|street|bridge|tunnel|service/.test(id))set(l.id,'line-color','#ffffff');
+    }
+  });
+  map.addLayer({id:'hills',type:'hillshade',source:'dem',paint:{
+    'hillshade-exaggeration':0.6,'hillshade-shadow-color':'#4f7a2e',
+    'hillshade-highlight-color':'#ffffff','hillshade-accent-color':'#7da24c'}},firstLine||undefined);
+}
+
 const ready=new Promise(res=>map.on('load',()=>{
   map.addSource('dem',{type:'raster-dem',encoding:'terrarium',tileSize:256,maxzoom:14,
     tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png']});
   map.setTerrain(DEM);
+  appleLook();
   map.addSource('st',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:'st-dots',type:'circle',source:'st',paint:{
     'circle-radius':9,'circle-stroke-color':'#fff','circle-stroke-width':2,

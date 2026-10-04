@@ -69,7 +69,7 @@ const dark=matchMedia('(prefers-color-scheme:dark)').matches;
 const DEM={source:'dem',exaggeration:1.4};
 const map=new maplibregl.Map({container:'map',
   style:`https://tiles.openfreemap.org/styles/${dark?'dark':'liberty'}`,
-  center:[100.55,7.0],zoom:9,pitch:0,bearing:0,maxPitch:70,attributionControl:{compact:true}});
+  center:[100.4747,7.0086],zoom:14.2,pitch:62,bearing:-20,maxPitch:70,attributionControl:{compact:true}});
 map.addControl(new maplibregl.NavigationControl({visualizePitch:true,showZoom:false}),'top-right');
 
 const $=id=>document.getElementById(id);
@@ -151,7 +151,7 @@ function checkHome(){
   if(!navigator.geolocation){show('none','?','ใช้ตำแหน่งไม่ได้','เครื่องนี้ไม่รองรับ ดูจากแผนที่ได้เลย');return}
   navigator.geolocation.getCurrentPosition(async p=>{
     const {latitude:la,longitude:lo}=p.coords;
-    map.flyTo({center:[lo,la],zoom:13,duration:1200});
+    map.flyTo({center:[lo,la],zoom:15,pitch:62,duration:1500});
     if(homeMarker)homeMarker.remove();
     homeMarker=new maplibregl.Marker({color:'#0a84ff'}).setLngLat([lo,la]).addTo(map);
     const near=stations.map(s=>({...s,d:dist(la,lo,s.lat,s.lng)})).filter(s=>s.d<=25).sort((a,b)=>a.d-b.d);

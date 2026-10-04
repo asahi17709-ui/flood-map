@@ -97,6 +97,7 @@ function appleLook(){
       else if(sl==='landuse')set(l.id,'fill-color',['match',['get','class'],'residential','#f3f1ea','commercial','#efe5cf','retail','#efe5cf','industrial','#ebe9e2','#e9f2c6']);
       else if(sl==='building'||/building/.test(id))set(l.id,'fill-color','#e9e7e0');
     }else if(l.type==='fill-extrusion'){
+      if(!BORIG&&sl==='building'){BSRC=l.source;BORIG=l.id}
       const H=['to-number',['coalesce',['get','render_height'],8]];   // ไม่มีข้อมูลความสูง ใช้ 8 ม.
       set(l.id,'fill-extrusion-height',H);
       set(l.id,'fill-extrusion-base',['to-number',['coalesce',['get','render_min_height'],0]]);
@@ -117,11 +118,69 @@ function appleLook(){
   return n;
 }
 
+// ---- (ทดลอง) ปัดมุมแปลนตึกให้โค้ง เฉพาะตอนซูมใกล้ ถ้าผิดพลาดจะกลับไปใช้ตึกเหลี่ยมเดิมเอง ----
+let BSRC=null,BORIG=null,rTimer=null,lastKey='';
+const TZ=2**14;
+function onEdge(c){   // จุดที่ถูกตัดตามขอบกระเบื้องแผนที่ ไม่ปัดมุม จะได้ไม่เกิดรอยแหว่ง
+  const fx=((c[0]+180)/360*TZ)%1,s=Math.sin(c[1]*Math.PI/180);
+  const fy=((0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*TZ)%1,e=3e-4;
+  const near=v=>v<e||v>1-e||Math.abs(v-1/64)<e||Math.abs(v-63/64)<e;
+  return near(fx)||near(fy);
+}
+function roundRing(ring){
+  const pts=ring.slice(0,-1),n=pts.length;if(n<3)return ring;
+  const R=2.5/111320,out=[];
+  for(let i=0;i<n;i++){
+    const p=pts[(i+n-1)%n],c=pts[i],q=pts[(i+1)%n];
+    const l1=Math.hypot(p[0]-c[0],p[1]-c[1]),l2=Math.hypot(q[0]-c[0],q[1]-c[1]);
+    if(!l1||!l2||onEdge(c)){out.push(c);continue}
+    const t1=Math.min(R/l1,.45),t2=Math.min(R/l2,.45);
+    const a=[c[0]+(p[0]-c[0])*t1,c[1]+(p[1]-c[1])*t1],b=[c[0]+(q[0]-c[0])*t2,c[1]+(q[1]-c[1])*t2];
+    for(let k=0;k<=4;k++){const u=k/4,v=1-u;
+      out.push([v*v*a[0]+2*u*v*c[0]+u*u*b[0],v*v*a[1]+2*u*v*c[1]+u*u*b[1]])}
+  }
+  out.push(out[0]);return out;
+}
+function setRound(on){
+  map.setLayoutProperty('bld-round','visibility',on?'visible':'none');
+  map.setLayoutProperty(BORIG,'visibility',on?'none':'visible');
+}
+function updateRound(){
+  if(!BORIG||!map.getSource('bld-round'))return;
+  if(map.getZoom()<15){setRound(false);lastKey='';return}
+  const c=map.getCenter(),key=map.getZoom().toFixed(1)+'|'+c.lng.toFixed(4)+'|'+c.lat.toFixed(4);
+  if(key===lastKey)return;lastKey=key;
+  try{
+    const b=map.getBounds(),pad=.003,seen=new Set(),feats=[];
+    for(const f of map.querySourceFeatures(BSRC,{sourceLayer:'building'})){
+      const g=f.geometry;if(!g||(g.type!=='Polygon'&&g.type!=='MultiPolygon'))continue;
+      const polys=g.type==='Polygon'?[g.coordinates]:g.coordinates;
+      for(const poly of polys){
+        const c0=poly[0][0];
+        if(c0[0]<b.getWest()-pad||c0[0]>b.getEast()+pad||c0[1]<b.getSouth()-pad||c0[1]>b.getNorth()+pad)continue;
+        const k=c0[0]+','+c0[1]+','+poly[0].length;if(seen.has(k))continue;seen.add(k);
+        feats.push({type:'Feature',properties:{h:Number(f.properties.render_height)||8,b:Number(f.properties.render_min_height)||0},
+          geometry:{type:'Polygon',coordinates:poly.map(roundRing)}});
+        if(feats.length>4000)throw new Error('too many');
+      }
+    }
+    if(!feats.length)throw new Error('none');
+    map.getSource('bld-round').setData({type:'FeatureCollection',features:feats});
+    setRound(true);
+  }catch(e){setRound(false)}
+}
+
 const ready=new Promise(res=>map.on('load',()=>{
   map.addSource('dem',{type:'raster-dem',encoding:'terrarium',tileSize:256,maxzoom:14,
     tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png']});
   map.setTerrain(DEM);
   window.paintN=appleLook();
+  if(BORIG){
+    map.addSource('bld-round',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+    map.addLayer({id:'bld-round',type:'fill-extrusion',source:'bld-round',minzoom:15,layout:{visibility:'none'},paint:{
+      'fill-extrusion-height':['get','h'],'fill-extrusion-base':['get','b'],'fill-extrusion-opacity':1,
+      'fill-extrusion-color':['interpolate',['linear'],['get','h'],0,'#ece8df',25,'#dcdcdc',80,'#c4c4c7']}});
+  }
   map.addSource('st',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:'st-dots',type:'circle',source:'st',paint:{
     'circle-radius':9,'circle-stroke-color':'#fff','circle-stroke-width':2,
@@ -209,10 +268,10 @@ function checkHome(){
   },()=>show('none','?','ไม่ได้รับสิทธิ์ใช้ตำแหน่ง','เปิดสิทธิ์ในตั้งค่าเบราว์เซอร์ หรือดูจากแผนที่ได้เลย'),{enableHighAccuracy:true,timeout:10000});
 }
 
+map.on('idle',()=>{clearTimeout(rTimer);rTimer=setTimeout(updateRound,300)});
 $('home').onclick=checkHome;$('radar').onclick=toggleRadar;
 loadStations().then(checkHome);
 setInterval(loadStations,5*60*1000);
 </script>
 </body>
 </html>
-

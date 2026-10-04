@@ -17,7 +17,7 @@
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;color:var(--ink);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Noto Sans Thai",system-ui,sans-serif}
-#map{position:absolute;inset:0}
+#map{position:absolute;inset:0;background:linear-gradient(#9fc3ea,#dbe9f6 25%,#eef3f6 45%)}
 .glass{background:var(--glass);border:1px solid var(--edge);box-shadow:0 8px 24px rgba(0,0,0,.14);
   -webkit-backdrop-filter:blur(16px) saturate(1.5);backdrop-filter:blur(16px) saturate(1.5)}
 @supports not (backdrop-filter:blur(1px)){.glass{background:Canvas}}
@@ -43,6 +43,7 @@ button:focus-visible,.call:focus-visible{outline:3px solid var(--blue);outline-o
 #stamp{font-size:.72rem;color:var(--sub);margin-top:.4rem}
 .maplibregl-popup-content{border-radius:16px;color:#0b1b26;font-family:inherit}
 @media (prefers-contrast:more){.glass{background:Canvas;border-color:CanvasText}.legend,#stamp{color:CanvasText}}
+@media (prefers-color-scheme:dark){#map{background:#0f1a22}}
 </style>
 </head>
 <body>
@@ -69,7 +70,7 @@ const dark=matchMedia('(prefers-color-scheme:dark)').matches;
 const DEM={source:'dem',exaggeration:1.4};
 const map=new maplibregl.Map({container:'map',
   style:`https://tiles.openfreemap.org/styles/${dark?'dark':'liberty'}`,
-  center:[100.4747,7.0086],zoom:14.2,pitch:62,bearing:-20,maxPitch:70,attributionControl:{compact:true}});
+  center:[100.4747,7.0086],zoom:14.2,pitch:62,bearing:-20,maxPitch:70,antialias:devicePixelRatio<2,pixelRatio:Math.min(devicePixelRatio,2),attributionControl:{compact:true}});
 map.addControl(new maplibregl.NavigationControl({visualizePitch:true,showZoom:false}),'top-right');
 
 const $=id=>document.getElementById(id);
@@ -93,9 +94,16 @@ function appleLook(){
       if(sl==='water'||/water/.test(id))set(l.id,'fill-color',BLUE);
       else if(sl==='park'||/park|wood|forest|grass|garden|golf/.test(id))set(l.id,'fill-color','#c8e598');
       else if(sl==='landcover')set(l.id,'fill-color',['match',['get','class'],'wood','#c8e598','grass','#d6ecaa','sand','#f3ecc8','ice','#ffffff','#e4f1bf']);
-      else if(sl==='landuse')set(l.id,'fill-color',['match',['get','class'],'residential','#f5f4ec','commercial','#f5f4ec','industrial','#efeee6','#e9f2c6']);
+      else if(sl==='landuse')set(l.id,'fill-color',['match',['get','class'],'residential','#f3f1ea','commercial','#efe5cf','retail','#efe5cf','industrial','#ebe9e2','#e9f2c6']);
       else if(sl==='building'||/building/.test(id))set(l.id,'fill-color','#e9e7e0');
-    }else if(l.type==='fill-extrusion')set(l.id,'fill-extrusion-color','#e9e7e0');
+    }else if(l.type==='fill-extrusion'){
+      const H=['to-number',['coalesce',['get','render_height'],8]];   // ไม่มีข้อมูลความสูง ใช้ 8 ม.
+      set(l.id,'fill-extrusion-height',H);
+      set(l.id,'fill-extrusion-base',['to-number',['coalesce',['get','render_min_height'],0]]);
+      set(l.id,'fill-extrusion-color',['interpolate',['linear'],H,0,'#ece8df',25,'#dcdcdc',80,'#c4c4c7']);
+      set(l.id,'fill-extrusion-opacity',1);
+      try{map.setLayerZoomRange(l.id,13,24)}catch(e){}
+    }
     else if(l.type==='line'){
       if(sl==='waterway'||/waterway|river|stream|canal/.test(id))set(l.id,'line-color',BLUE);
       else if(/casing/.test(id))set(l.id,'line-color','#c0c5cd');
@@ -105,6 +113,7 @@ function appleLook(){
   map.addLayer({id:'hills',type:'hillshade',source:'dem',paint:{
     'hillshade-exaggeration':0.6,'hillshade-shadow-color':'#4f7a2e',
     'hillshade-highlight-color':'#ffffff','hillshade-accent-color':'#7da24c'}},firstLine||undefined);
+  try{map.setLight({anchor:'viewport',color:'#ffffff',intensity:0.28,position:[1.15,200,45]})}catch(e){}
   return n;
 }
 
@@ -206,3 +215,4 @@ setInterval(loadStations,5*60*1000);
 </script>
 </body>
 </html>
+

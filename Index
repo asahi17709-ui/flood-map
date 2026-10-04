@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eef3f6">
+<title>แผนที่น้ำท่วมสงขลา</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+:root{
+  --ink:#0b1b26;--sub:#4a5e6a;--glass:rgba(255,255,255,.66);--edge:rgba(255,255,255,.75);
+  --chip:rgba(11,27,38,.07);--ok:#18a874;--warn:#f59e0b;--bad:#e5384f;--none:#7b8b95;--blue:#0a84ff
+}
+@media (prefers-color-scheme:dark){
+  :root{--ink:#f2f7fa;--sub:#a6b7c2;--glass:rgba(28,36,44,.62);--edge:rgba(255,255,255,.14);--chip:rgba(255,255,255,.10)}
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;color:var(--ink);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Noto Sans Thai",system-ui,sans-serif}
+#map{position:absolute;inset:0}
+.glass{background:var(--glass);border:1px solid var(--edge);box-shadow:0 8px 24px rgba(0,0,0,.14);
+  -webkit-backdrop-filter:blur(16px) saturate(1.5);backdrop-filter:blur(16px) saturate(1.5)}
+@supports not (backdrop-filter:blur(1px)){.glass{background:Canvas}}
+@media (prefers-reduced-transparency:reduce){.glass{background:Canvas;-webkit-backdrop-filter:none;backdrop-filter:none}}
+.pill{position:absolute;top:calc(10px + env(safe-area-inset-top,0px));left:12px;z-index:1000;
+  border-radius:999px;padding:.45rem .9rem;font-weight:600;font-size:.9rem;display:flex;gap:.5rem;align-items:center}
+.pill b{width:.55rem;height:.55rem;border-radius:50%;background:var(--ok)}
+.card{position:absolute;z-index:1000;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));
+  max-height:62vh;overflow:auto;border-radius:28px;padding:.9rem}
+.verdict{border-radius:20px;padding:.9rem 1rem;color:#fff;background:var(--none);display:flex;gap:.8rem;align-items:center}
+.verdict .ic{flex:none;width:2.4rem;height:2.4rem;border-radius:50%;background:rgba(255,255,255,.25);
+  display:grid;place-items:center;font-size:1.3rem;font-weight:800}
+.verdict strong{display:block;font-size:1.2rem;line-height:1.25}
+.verdict small{display:block;font-size:.85rem;opacity:.95;line-height:1.4;margin-top:.15rem}
+.row{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.7rem}
+button,.call{flex:1 1 6.5rem;min-height:3rem;border:0;border-radius:999px;padding:.7rem 1rem;font:inherit;
+  font-weight:600;color:var(--ink);background:var(--chip);text-align:center;text-decoration:none;cursor:pointer}
+#radar[aria-pressed=true]{background:var(--blue);color:#fff}
+.call{background:var(--bad);color:#fff;display:flex;align-items:center;justify-content:center}
+button:focus-visible,.call:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+.legend{display:flex;flex-wrap:wrap;gap:.3rem .9rem;font-size:.78rem;color:var(--sub);margin-top:.7rem}
+.legend i{display:inline-block;width:.6rem;height:.6rem;border-radius:50%;margin-right:.3rem}
+#stamp{font-size:.72rem;color:var(--sub);margin-top:.4rem}
+.maplibregl-popup-content{border-radius:16px;color:#0b1b26;font-family:inherit}
+@media (prefers-contrast:more){.glass{background:Canvas;border-color:CanvasText}.legend,#stamp{color:CanvasText}}
+</style>
+</head>
+<body>
+<div id="map" role="application" aria-label="แผนที่ระดับน้ำ"></div>
+<div class="pill glass"><b></b>สงขลา · ข้อมูลสด</div>
+<div class="card glass">
+  <div id="verdict" class="verdict" role="status" aria-live="polite">
+    <div class="ic">…</div><div><strong>กำลังตรวจตำแหน่ง</strong><small>กรุณาอนุญาตการใช้ตำแหน่ง</small></div>
+  </div>
+  <div class="row">
+    <button id="home">ตรวจใหม่</button>
+    <button id="radar" aria-pressed="false">เรดาร์ฝน</button>
+    <a class="call" href="tel:1784">โทร 1784</a>
+  </div>
+  <div class="legend"><span><i style="background:var(--ok)"></i>ปกติ</span><span><i style="background:var(--warn)"></i>ใกล้ตลิ่ง</span><span><i style="background:var(--bad)"></i>ล้นตลิ่ง</span><span><i style="background:var(--none)"></i>ไม่มีข้อมูล</span></div>
+  <div id="stamp">กำลังโหลดข้อมูล…</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+const COLORS={ok:'#18a874',warn:'#f59e0b',bad:'#e5384f',none:'#7b8b95'};
+const RANK={none:0,ok:1,warn:2,bad:3};
+const dark=matchMedia('(prefers-color-scheme:dark)').matches;
+const DEM={source:'dem',exaggeration:1.4};
+const map=new maplibregl.Map({container:'map',
+  style:`https://tiles.openfreemap.org/styles/${dark?'dark':'liberty'}`,
+  center:[100.55,7.0],zoom:9,pitch:0,bearing:0,maxPitch:70,attributionControl:{compact:true}});
+map.addControl(new maplibregl.NavigationControl({visualizePitch:true,showZoom:false}),'top-right');
+
+const $=id=>document.getElementById(id);
+const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const dist=(a,b,c,d)=>{const R=6371,t=x=>x*Math.PI/180,dl=t(c-a),dn=t(d-b);
+  const h=Math.sin(dl/2)**2+Math.cos(t(a))*Math.cos(t(c))*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(h))};
+let stations=[],homeMarker=null,radarOn=false;
+
+const ready=new Promise(res=>map.on('load',()=>{
+  map.addSource('dem',{type:'raster-dem',encoding:'terrarium',tileSize:256,maxzoom:14,
+    tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png']});
+  map.setTerrain(DEM);
+  map.addSource('st',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addLayer({id:'st-dots',type:'circle',source:'st',paint:{
+    'circle-radius':9,'circle-stroke-color':'#fff','circle-stroke-width':2,
+    'circle-color':['match',['get','status'],'ok',COLORS.ok,'warn',COLORS.warn,'bad',COLORS.bad,COLORS.none]}});
+  map.on('click','st-dots',e=>{
+    const p=e.features[0].properties,m=p.margin===null||p.margin==='null'||p.margin===undefined?null:Number(p.margin);
+    const gap=m===null?'ไม่มีข้อมูลตลิ่ง':(m>=0?`ต่ำกว่าตลิ่ง ${m.toFixed(2)} ม.`:`สูงกว่าตลิ่ง ${(-m).toFixed(2)} ม.`);
+    new maplibregl.Popup({offset:12}).setLngLat(e.lngLat)
+      .setHTML(`<b>${esc(p.name)}</b><br>${esc(p.river)}<br>${gap}<br><small>วัดเมื่อ ${esc(p.time)||'-'}</small>`).addTo(map);
+  });
+  map.on('mouseenter','st-dots',()=>map.getCanvas().style.cursor='pointer');
+  map.on('mouseleave','st-dots',()=>map.getCanvas().style.cursor='');
+  res();
+}));
+
+// ---- แหล่งข้อมูลระดับน้ำ (ยังไม่ได้ยืนยันกับข้อมูลจริง: ถ้าจุดไม่ขึ้น ให้แก้เฉพาะฟังก์ชัน pick) ----
+const SOURCE='https://api-v3.thaiwater.net/api/v1/thaiwater30/public/waterlevel_load';
+const BOX={minLat:6.4,maxLat:7.6,minLng:100.0,maxLng:101.2}; // สงขลา เปลี่ยนเลข 4 ตัวนี้เพื่อใช้จังหวัดอื่น
+function pick(row){
+  const st=row.station||{};
+  const name=(st.tele_station_name&&(st.tele_station_name.th||st.tele_station_name))||st.name||'';
+  return {name,
+    lat:Number(st.tele_station_lat??st.lat),lng:Number(st.tele_station_long??st.lng),
+    level:Number(row.waterlevel_msl??row.waterlevel_value),
+    bank:Number(st.min_bank??row.min_bank??row.bank_level),
+    river:row.river_name?.th||st.river_name||'',time:row.waterlevel_datetime||row.datetime||''};
+}
+const statusOf=m=>m==null?'none':m<0?'bad':m<0.5?'warn':'ok'; // ล้นตลิ่ง / ห่างตลิ่งน้อยกว่า 0.5 ม. / ปกติ
+function normalize(rows){
+  return rows.map(pick).filter(s=>Number.isFinite(s.lat)&&Number.isFinite(s.lng)&&
+    s.lat>=BOX.minLat&&s.lat<=BOX.maxLat&&s.lng>=BOX.minLng&&s.lng<=BOX.maxLng)
+  .map(s=>{const margin=Number.isFinite(s.level)&&Number.isFinite(s.bank)?s.bank-s.level:null;
+    return {name:s.name,river:s.river,lat:s.lat,lng:s.lng,margin,time:s.time,status:statusOf(margin)}});
+}
+
+async function loadStations(){
+  try{
+    let list=null;   // ลองตัวกลาง /api/stations ก่อน (ถ้ามี) ไม่มีก็ดึงตรงจากต้นทาง
+    try{const a=await fetch('/api/stations');if(a.ok){const j=await a.json();if(Array.isArray(j))list=j}}catch(e){}
+    if(!list){const r=await fetch(SOURCE);if(!r.ok)throw 0;list=normalize((await r.json()).data||[])}
+    stations=list;await ready;
+    map.getSource('st').setData({type:'FeatureCollection',features:stations.map(s=>({type:'Feature',
+      geometry:{type:'Point',coordinates:[s.lng,s.lat]},properties:{name:s.name,river:s.river,margin:s.margin,time:s.time,status:s.status}}))});
+    $('stamp').textContent='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' · น้ำ: สสน./ชป. · ฝน: Open-Meteo, RainViewer';
+  }catch(e){$('stamp').textContent='โหลดข้อมูลสถานีวัดน้ำไม่สำเร็จ (แผนที่และเรดาร์ยังใช้ได้) จะลองใหม่ใน 5 นาที';}
+}
+
+async function toggleRadar(){
+  const b=$('radar');await ready;
+  if(radarOn){map.removeLayer('radar');map.removeSource('radar');radarOn=false;b.setAttribute('aria-pressed','false');return}
+  try{
+    const j=await (await fetch('https://api.rainviewer.com/public/weather-maps.json')).json();
+    const f=j.radar.past[j.radar.past.length-1];
+    map.addSource('radar',{type:'raster',tileSize:256,tiles:[`${j.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`]});
+    map.addLayer({id:'radar',type:'raster',source:'radar',paint:{'raster-opacity':.65}},'st-dots');
+    radarOn=true;b.setAttribute('aria-pressed','true');
+  }catch(e){$('stamp').textContent='โหลดเรดาร์ไม่สำเร็จ ลองอีกครั้ง'}
+}
+
+function show(level,icon,title,sub){
+  const v=$('verdict');v.style.background=COLORS[level];
+  v.innerHTML=`<div class="ic" aria-hidden="true">${icon}</div><div><strong>${title}</strong><small>${sub}</small></div>`;
+}
+
+function checkHome(){
+  show('none','…','กำลังตรวจตำแหน่ง','กรุณาอนุญาตการใช้ตำแหน่ง');
+  if(!navigator.geolocation){show('none','?','ใช้ตำแหน่งไม่ได้','เครื่องนี้ไม่รองรับ ดูจากแผนที่ได้เลย');return}
+  navigator.geolocation.getCurrentPosition(async p=>{
+    const {latitude:la,longitude:lo}=p.coords;
+    map.flyTo({center:[lo,la],zoom:13,duration:1200});
+    if(homeMarker)homeMarker.remove();
+    homeMarker=new maplibregl.Marker({color:'#0a84ff'}).setLngLat([lo,la]).addTo(map);
+    const near=stations.map(s=>({...s,d:dist(la,lo,s.lat,s.lng)})).filter(s=>s.d<=25).sort((a,b)=>a.d-b.d);
+    let worst='none';near.forEach(s=>{if(RANK[s.status]>RANK[worst])worst=s.status});
+    let rain=0;
+    try{
+      const w=await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${la}&longitude=${lo}&hourly=precipitation&forecast_days=2&timezone=Asia%2FBangkok`)).json();
+      const now=new Date().getHours();rain=w.hourly.precipitation.slice(now,now+24).reduce((a,b)=>a+b,0);
+    }catch(e){}
+    let level=worst==='none'?'ok':worst;
+    if(rain>50)level='bad';else if(rain>20&&level==='ok')level='warn';
+    const t={ok:['✓','ตอนนี้ยังปลอดภัย'],warn:['!','เฝ้าระวัง'],bad:['✕','เสี่ยงสูง เตรียมพร้อมอพยพ']}[level];
+    const st=near.length?`สถานีใกล้สุด ${esc(near[0].name)} (${near[0].d.toFixed(0)} กม.)`:'ไม่มีสถานีวัดน้ำในรัศมี 25 กม.';
+    show(level,t[0],t[1],`${st}<br>ฝน 24 ชม. ข้างหน้า ประมาณ ${rain.toFixed(0)} มม.`);
+  },()=>show('none','?','ไม่ได้รับสิทธิ์ใช้ตำแหน่ง','เปิดสิทธิ์ในตั้งค่าเบราว์เซอร์ หรือดูจากแผนที่ได้เลย'),{enableHighAccuracy:true,timeout:10000});
+}
+
+$('home').onclick=checkHome;$('radar').onclick=toggleRadar;
+loadStations().then(checkHome);
+setInterval(loadStations,5*60*1000);
+</script>
+</body>
+</html>

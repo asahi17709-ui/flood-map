@@ -35,11 +35,12 @@ html,body{height:100%;margin:0;color:var(--ink);
 .row{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.7rem}
 button,.call{flex:1 1 6.5rem;min-height:3rem;border:0;border-radius:999px;padding:.7rem 1rem;font:inherit;
   font-weight:600;color:var(--ink);background:var(--chip);text-align:center;text-decoration:none;cursor:pointer}
-#radar[aria-pressed=true]{background:var(--blue);color:#fff}
+#radar[aria-pressed=true],#flood[aria-pressed=true]{background:var(--blue);color:#fff}
 .call{background:var(--bad);color:#fff;display:flex;align-items:center;justify-content:center}
 button:focus-visible,.call:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
 .legend{display:flex;flex-wrap:wrap;gap:.3rem .9rem;font-size:.78rem;color:var(--sub);margin-top:.7rem}
 .legend i{display:inline-block;width:.6rem;height:.6rem;border-radius:50%;margin-right:.3rem}
+#floodnote{display:none;font-size:.78rem;color:var(--sub);margin-top:.6rem;line-height:1.45}
 #stamp{font-size:.72rem;color:var(--sub);margin-top:.4rem}
 .maplibregl-popup-content{border-radius:16px;color:#0b1b26;font-family:inherit}
 @media (prefers-contrast:more){.glass{background:Canvas;border-color:CanvasText}.legend,#stamp{color:CanvasText}}
@@ -56,9 +57,11 @@ button:focus-visible,.call:focus-visible{outline:3px solid var(--blue);outline-o
   <div class="row">
     <button id="home">ตรวจใหม่</button>
     <button id="radar" aria-pressed="false">เรดาร์ฝน</button>
+    <button id="flood" aria-pressed="false">ดูน้ำท่วมหาดใหญ่ปีที่แล้ว (จำลอง)</button>
     <a class="call" href="tel:1784">โทร 1784</a>
   </div>
   <div class="legend"><span><i style="background:var(--ok)"></i>ปกติ</span><span><i style="background:var(--warn)"></i>ใกล้ตลิ่ง</span><span><i style="background:var(--bad)"></i>ล้นตลิ่ง</span><span><i style="background:var(--none)"></i>ไม่มีข้อมูล</span></div>
+  <div id="floodnote">ภาพจำลองคร่าวๆ ตามช่วงความลึก 0.5–2.5 ม. ที่กรมชลประทานรายงานในเขตเทศบาลนครหาดใหญ่ (ฝน 335 มม. ใน 1 วัน เมื่อ 21 พ.ย. 2568) ไม่ใช่ขอบเขตน้ำท่วมจริง บางจุดลึกกว่านี้มาก</div>
   <div id="stamp">กำลังโหลดข้อมูล…</div>
 </div>
 
@@ -70,8 +73,8 @@ const dark=matchMedia('(prefers-color-scheme:dark)').matches;
 const DEM={source:'dem',exaggeration:1.4};
 const map=new maplibregl.Map({container:'map',
   style:`https://tiles.openfreemap.org/styles/${dark?'dark':'liberty'}`,
-  center:[100.4747,7.0086],zoom:14.2,pitch:62,bearing:-20,maxPitch:70,antialias:devicePixelRatio<2,pixelRatio:Math.min(devicePixelRatio,2),attributionControl:{compact:true}});
-map.addControl(new maplibregl.NavigationControl({visualizePitch:true,showZoom:false}),'top-right');
+  center:[100.4747,7.0086],zoom:14.2,pitch:50,bearing:0,minPitch:50,maxPitch:50,dragRotate:false,pitchWithRotate:false,touchPitch:false,minZoom:10.5,maxZoom:17,antialias:devicePixelRatio<2,pixelRatio:Math.min(devicePixelRatio,2),attributionControl:{compact:true}});
+map.touchZoomRotate.disableRotation();
 
 const $=id=>document.getElementById(id);
 const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -170,10 +173,36 @@ function updateRound(){
   }catch(e){setRound(false)}
 }
 
+// ---- จำลองน้ำท่วมหาดใหญ่ ปี 2568: 3 โซนความลึก ยกระดับน้ำด้วยตัวเลขตัวเดียว เบามาก (รูปทรงเป็นการประมาณ ไม่ใช่ขอบเขตจริง) ----
+const zone=(d,ring)=>({type:'Feature',properties:{d},geometry:{type:'Polygon',coordinates:[ring.concat([ring[0]])]}});
+const FLOOD={type:'FeatureCollection',features:[
+  zone(0.5,[[100.430,6.980],[100.438,7.035],[100.470,7.062],[100.515,7.055],[100.532,7.015],[100.520,6.968],[100.480,6.950],[100.445,6.955]]),
+  zone(1.5,[[100.448,6.990],[100.452,7.030],[100.478,7.045],[100.505,7.035],[100.512,7.005],[100.498,6.975],[100.470,6.970]]),
+  zone(2.5,[[100.458,7.000],[100.462,7.024],[100.482,7.030],[100.498,7.018],[100.494,6.995],[100.475,6.988]])]};
+let floodOn=false,floodT=0,floodRaf=0;
+function setFlood(t){floodT=t;map.setPaintProperty('flood','fill-extrusion-height',['*',['get','d'],t])}
+async function toggleFlood(){
+  await ready;
+  floodOn=!floodOn;
+  $('flood').setAttribute('aria-pressed',floodOn);
+  $('floodnote').style.display=floodOn?'block':'none';
+  if(floodOn){
+    map.setLayoutProperty('flood','visibility','visible');
+    map.fitBounds([[100.425,6.945],[100.54,7.065]],{padding:{top:70,bottom:320,left:16,right:16},duration:1200});
+  }
+  cancelAnimationFrame(floodRaf);
+  const from=floodT,to=floodOn?1:0,t0=performance.now(),dur=floodOn?6000:1500;
+  const step=now=>{
+    const k=Math.min((now-t0)/dur,1);setFlood(from+(to-from)*k);
+    if(k<1)floodRaf=requestAnimationFrame(step);
+    else if(!floodOn)map.setLayoutProperty('flood','visibility','none');
+  };
+  floodRaf=requestAnimationFrame(step);
+}
+
 const ready=new Promise(res=>map.on('load',()=>{
   map.addSource('dem',{type:'raster-dem',encoding:'terrarium',tileSize:256,maxzoom:14,
     tiles:['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png']});
-  map.setTerrain(DEM);
   window.paintN=appleLook();
   if(BORIG){
     map.addSource('bld-round',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
@@ -181,6 +210,10 @@ const ready=new Promise(res=>map.on('load',()=>{
       'fill-extrusion-height':['get','h'],'fill-extrusion-base':['get','b'],'fill-extrusion-opacity':1,
       'fill-extrusion-color':['interpolate',['linear'],['get','h'],0,'#ece8df',25,'#dcdcdc',80,'#c4c4c7']}});
   }
+  map.addSource('flood',{type:'geojson',data:FLOOD});
+  map.addLayer({id:'flood',type:'fill-extrusion',source:'flood',layout:{visibility:'none'},paint:{
+    'fill-extrusion-color':['interpolate',['linear'],['get','d'],0.5,'#8ecae6',1.5,'#4aa3d8',2.5,'#1f6fb5'],
+    'fill-extrusion-height':['*',['get','d'],0],'fill-extrusion-base':0,'fill-extrusion-opacity':0.6}});
   map.addSource('st',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:'st-dots',type:'circle',source:'st',paint:{
     'circle-radius':9,'circle-stroke-color':'#fff','circle-stroke-width':2,
@@ -250,7 +283,7 @@ function checkHome(){
   if(!navigator.geolocation){show('none','?','ใช้ตำแหน่งไม่ได้','เครื่องนี้ไม่รองรับ ดูจากแผนที่ได้เลย');return}
   navigator.geolocation.getCurrentPosition(async p=>{
     const {latitude:la,longitude:lo}=p.coords;
-    map.flyTo({center:[lo,la],zoom:15,pitch:62,duration:1500});
+    map.flyTo({center:[lo,la],zoom:15,duration:1500});
     if(homeMarker)homeMarker.remove();
     homeMarker=new maplibregl.Marker({color:'#0a84ff'}).setLngLat([lo,la]).addTo(map);
     const near=stations.map(s=>({...s,d:dist(la,lo,s.lat,s.lng)})).filter(s=>s.d<=25).sort((a,b)=>a.d-b.d);
@@ -269,6 +302,7 @@ function checkHome(){
 }
 
 map.on('idle',()=>{clearTimeout(rTimer);rTimer=setTimeout(updateRound,300)});
+$('flood').onclick=toggleFlood;
 $('home').onclick=checkHome;$('radar').onclick=toggleRadar;
 loadStations().then(checkHome);
 setInterval(loadStations,5*60*1000);

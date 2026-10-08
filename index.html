@@ -33,11 +33,12 @@ html,body{height:100%;margin:0;color:var(--ink);
 .verdict strong{display:block;font-size:1.2rem;line-height:1.25}
 .verdict small{display:block;font-size:.85rem;opacity:.95;line-height:1.4;margin-top:.15rem}
 .row{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:.7rem}
-button,.call{flex:1 1 6.5rem;min-height:3rem;border:0;border-radius:999px;padding:.7rem 1rem;font:inherit;
+button,.call,.link{flex:1 1 6.5rem;min-height:3rem;border:0;border-radius:999px;padding:.7rem 1rem;font:inherit;
   font-weight:600;color:var(--ink);background:var(--chip);text-align:center;text-decoration:none;cursor:pointer}
 #radar[aria-pressed=true],#flood[aria-pressed=true]{background:var(--blue);color:#fff}
+.link{background:var(--chip);color:var(--ink);display:flex;align-items:center;justify-content:center}
 .call{background:var(--bad);color:#fff;display:flex;align-items:center;justify-content:center}
-button:focus-visible,.call:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+button:focus-visible,.call:focus-visible,.link:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
 .legend{display:flex;flex-wrap:wrap;gap:.3rem .9rem;font-size:.78rem;color:var(--sub);margin-top:.7rem}
 .legend i{display:inline-block;width:.6rem;height:.6rem;border-radius:50%;margin-right:.3rem}
 #floodnote{display:none;font-size:.78rem;color:var(--sub);margin-top:.6rem;line-height:1.45}
@@ -57,14 +58,16 @@ button:focus-visible,.call:focus-visible{outline:3px solid var(--blue);outline-o
   <div class="row">
     <button id="home">ตรวจใหม่</button>
     <button id="radar" aria-pressed="false">เรดาร์ฝน</button>
-    <button id="flood" aria-pressed="false">ดูน้ำท่วมหาดใหญ่ปีที่แล้ว (จำลอง)</button>
+    <button id="flood" aria-pressed="false">ดูน้ำท่วมหาดใหญ่ 2568 (จำลอง)</button>
+    <a class="link" href="https://www.hatyaicityclimate.org/" target="_blank" rel="noopener">กล้องน้ำสดหาดใหญ่</a>
     <a class="call" href="tel:1784">โทร 1784</a>
   </div>
   <div class="legend"><span><i style="background:var(--ok)"></i>ปกติ</span><span><i style="background:var(--warn)"></i>ใกล้ตลิ่ง</span><span><i style="background:var(--bad)"></i>ล้นตลิ่ง</span><span><i style="background:var(--none)"></i>ไม่มีข้อมูล</span></div>
-  <div id="floodnote">ภาพจำลองคร่าวๆ ตามช่วงความลึก 0.5–2.5 ม. ที่กรมชลประทานรายงานในเขตเทศบาลนครหาดใหญ่ (ฝน 335 มม. ใน 1 วัน เมื่อ 21 พ.ย. 2568) ไม่ใช่ขอบเขตน้ำท่วมจริง บางจุดลึกกว่านี้มาก</div>
+  <div id="floodnote">ภาพจำลองจากความสูงพื้นดิน ปรับให้พื้นที่ท่วมใกล้เคียงที่ GISTDA รายงาน (มากกว่า 50,000 ไร่ ในอำเภอหาดใหญ่ ช่วง 24–25 พ.ย. 2568) รูปร่างและความลึกจริงต่างจากนี้ได้มาก ไม่ใช่ข้อมูลทางการ</div>
   <div id="stamp">กำลังโหลดข้อมูล…</div>
 </div>
 
+<canvas id="floodcv" width="256" height="256" style="display:none"></canvas>
 <script src="https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script>
 const COLORS={ok:'#18a874',warn:'#f59e0b',bad:'#e5384f',none:'#7b8b95'};
@@ -173,29 +176,105 @@ function updateRound(){
   }catch(e){setRound(false)}
 }
 
-// ---- จำลองน้ำท่วมหาดใหญ่ ปี 2568: 3 โซนความลึก ยกระดับน้ำด้วยตัวเลขตัวเดียว เบามาก (รูปทรงเป็นการประมาณ ไม่ใช่ขอบเขตจริง) ----
-const zone=(d,ring)=>({type:'Feature',properties:{d},geometry:{type:'Polygon',coordinates:[ring.concat([ring[0]])]}});
-const FLOOD={type:'FeatureCollection',features:[
-  zone(0.5,[[100.430,6.980],[100.438,7.035],[100.470,7.062],[100.515,7.055],[100.532,7.015],[100.520,6.968],[100.480,6.950],[100.445,6.955]]),
-  zone(1.5,[[100.448,6.990],[100.452,7.030],[100.478,7.045],[100.505,7.035],[100.512,7.005],[100.498,6.975],[100.470,6.970]]),
-  zone(2.5,[[100.458,7.000],[100.462,7.024],[100.482,7.030],[100.498,7.018],[100.494,6.995],[100.475,6.988]])]};
-let floodOn=false,floodT=0,floodRaf=0;
-function setFlood(t){floodT=t;map.setPaintProperty('flood','fill-extrusion-height',['*',['get','d'],t])}
-async function toggleFlood(){
-  await ready;
-  floodOn=!floodOn;
-  $('flood').setAttribute('aria-pressed',floodOn);
-  $('floodnote').style.display=floodOn?'block':'none';
-  if(floodOn){
-    map.setLayoutProperty('flood','visibility','visible');
-    map.fitBounds([[100.425,6.945],[100.54,7.065]],{padding:{top:70,bottom:320,left:16,right:16},duration:1200});
+// ---- จำลองน้ำท่วมหาดใหญ่ ปี 2568 จากความสูงพื้นดิน (ไม่ใช่ข้อมูลจริง) ----
+// ดึงข้อมูลความสูง -> ลดผลของตึกต้นไม้ -> ให้น้ำไหลจากจุดต่ำใกล้ใจกลางเมืองแล้วปรับระดับน้ำให้พื้นที่ท่วมใกล้เคียงที่ GISTDA รายงาน (>50,000 ไร่)
+const FB={w:100.40,e:100.55,s:6.93,n:7.08},GN=256,DZ=12,TARGET_CELLS=20000,DIRS=[[1,0],[-1,0],[0,1],[0,-1]];
+const FLABEL='ดูน้ำท่วมหาดใหญ่ 2568 (จำลอง)';
+let FL=null,floodOn=false,floodBusy=false,floodRaf=0,floodT=0;
+const tileXY=(lng,lat)=>{const n=2**DZ,sn=Math.sin(lat*Math.PI/180);return [(lng+180)/360*n,(0.5-Math.log((1+sn)/(1-sn))/(4*Math.PI))*n]};
+function loadTile(x,y){return new Promise((res,rej)=>{
+  const im=new Image();im.crossOrigin='anonymous';
+  im.onload=()=>{const c=document.createElement('canvas');c.width=c.height=256;const g=c.getContext('2d',{willReadFrequently:true});g.drawImage(im,0,0);res(g.getImageData(0,0,256,256).data)};
+  im.onerror=()=>rej(new Error('dem'));
+  im.src=`https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${DZ}/${x}/${y}.png`})}
+function filt3(G,mode){
+  const o=new Float32Array(G.length);
+  for(let j=0;j<GN;j++)for(let i=0;i<GN;i++){
+    let v=mode==='min'?1e9:0,c=0;
+    for(let dj=-1;dj<=1;dj++)for(let di=-1;di<=1;di++){
+      const ii=i+di,jj=j+dj;if(ii<0||jj<0||ii>=GN||jj>=GN)continue;
+      const g=G[jj*GN+ii];if(mode==='min')v=Math.min(v,g);else{v+=g;c++}
+    }
+    o[j*GN+i]=mode==='min'?v:v/c;
   }
+  return o;
+}
+function fillFrom(G,seed,W){
+  const m=new Uint8Array(GN*GN),q=new Int32Array(GN*GN);let h=0,t=0;
+  if(G[seed]>W)return {m,n:0};
+  m[seed]=1;q[t++]=seed;
+  while(h<t){
+    const k=q[h++],i=k%GN,j=(k/GN)|0;
+    for(const [di,dj] of DIRS){
+      const ii=i+di,jj=j+dj;if(ii<0||jj<0||ii>=GN||jj>=GN)continue;
+      const nk=jj*GN+ii;
+      if(!m[nk]&&G[nk]<=W&&G[nk]>1.5){m[nk]=1;q[t++]=nk}
+    }
+  }
+  return {m,n:t};
+}
+function calibrate(G,seed,sg){
+  let lo=sg,hi=sg+20;
+  for(let it=0;it<16;it++){const mid=(lo+hi)/2;if(fillFrom(G,seed,mid).n<TARGET_CELLS)lo=mid;else hi=mid}
+  return {W:hi,mask:fillFrom(G,seed,hi).m};
+}
+async function buildFlood(){
+  const [x0,y0]=tileXY(FB.w,FB.n),[x1,y1]=tileXY(FB.e,FB.s),tiles={},jobs=[];
+  for(let tx=Math.floor(x0);tx<=Math.floor(x1);tx++)for(let ty=Math.floor(y0);ty<=Math.floor(y1);ty++)
+    jobs.push(loadTile(tx,ty).then(d=>{tiles[tx+','+ty]=d}));
+  await Promise.all(jobs);
+  let G=new Float32Array(GN*GN);
+  for(let j=0;j<GN;j++)for(let i=0;i<GN;i++){
+    const X=x0+(x1-x0)*(i+.5)/GN,Y=y0+(y1-y0)*(j+.5)/GN,tx=Math.floor(X),ty=Math.floor(Y);
+    const px=Math.min(255,Math.floor((X-tx)*256)),py=Math.min(255,Math.floor((Y-ty)*256));
+    const d=tiles[tx+','+ty],o=(py*256+px)*4;
+    G[j*GN+i]=d[o]*256+d[o+1]+d[o+2]/256-32768;
+  }
+  G=filt3(filt3(filt3(filt3(G,'min'),'min'),'avg'),'avg');   // ลดผลตึก/ต้นไม้ แล้วทำให้เรียบ
+  const [cx,cy]=tileXY(100.4747,7.0086),ci=Math.round((cx-x0)/(x1-x0)*GN),cj=Math.round((cy-y0)/(y1-y0)*GN);
+  let seed=-1,sg=1e9;
+  for(let j=cj-40;j<=cj+40;j++)for(let i=ci-40;i<=ci+40;i++){
+    if(i<0||j<0||i>=GN||j>=GN)continue;const g=G[j*GN+i];if(g>1.5&&g<sg){sg=g;seed=j*GN+i}
+  }
+  if(seed<0)throw new Error('seed');
+  const c=calibrate(G,seed,sg);
+  FL={G,mask:c.mask,W:c.W,g0:sg};
+}
+const fcv=document.getElementById('floodcv'),fctx=fcv.getContext('2d');
+const lerp=(a,b,u)=>a+(b-a)*u;
+function drawFlood(t){
+  const {G,mask,W,g0}=FL,w=g0+(W-g0)*t,img=fctx.createImageData(GN,GN),d=img.data;
+  for(let k=0;k<GN*GN;k++){
+    if(!mask[k])continue;
+    const dep=w-G[k];if(dep<=0.02)continue;
+    const u=Math.min(dep/4.5,1),o=k*4;
+    d[o]=lerp(190,23,u);d[o+1]=lerp(230,63,u);d[o+2]=lerp(247,133,u);
+    d[o+3]=lerp(130,215,u)*Math.min(dep/0.3,1);
+  }
+  fctx.putImageData(img,0,0);
+}
+async function toggleFlood(){
+  const b=$('flood');
+  if(floodBusy)return;
+  if(!floodOn){
+    floodBusy=true;b.textContent='กำลังคำนวณ…';
+    try{if(!FL)await buildFlood()}
+    catch(e){$('stamp').textContent='ทำภาพจำลองไม่สำเร็จ (โหลดข้อมูลความสูงไม่ได้)';b.textContent=FLABEL;floodBusy=false;return}
+    floodBusy=false;b.textContent='ซ่อนน้ำท่วมจำลอง';
+    map.fitBounds([[FB.w+0.01,FB.s+0.01],[FB.e-0.01,FB.n-0.01]],{padding:{top:70,bottom:320,left:16,right:16},duration:1200});
+    drawFlood(floodT);map.setLayoutProperty('flood','visibility','visible');
+    $('floodnote').style.display='block';
+  }else{
+    b.textContent=FLABEL;$('floodnote').style.display='none';
+  }
+  floodOn=!floodOn;b.setAttribute('aria-pressed',floodOn);
   cancelAnimationFrame(floodRaf);
-  const from=floodT,to=floodOn?1:0,t0=performance.now(),dur=floodOn?6000:1500;
+  const src=map.getSource('flood'),from=floodT,to=floodOn?1:0,t0=performance.now(),dur=floodOn?7000:1500;
+  src.play();
   const step=now=>{
-    const k=Math.min((now-t0)/dur,1);setFlood(from+(to-from)*k);
+    const k=Math.min((now-t0)/dur,1);floodT=from+(to-from)*k;drawFlood(floodT);
     if(k<1)floodRaf=requestAnimationFrame(step);
-    else if(!floodOn)map.setLayoutProperty('flood','visibility','none');
+    else{requestAnimationFrame(()=>src.pause());if(!floodOn)map.setLayoutProperty('flood','visibility','none')}
   };
   floodRaf=requestAnimationFrame(step);
 }
@@ -210,10 +289,9 @@ const ready=new Promise(res=>map.on('load',()=>{
       'fill-extrusion-height':['get','h'],'fill-extrusion-base':['get','b'],'fill-extrusion-opacity':1,
       'fill-extrusion-color':['interpolate',['linear'],['get','h'],0,'#ece8df',25,'#dcdcdc',80,'#c4c4c7']}});
   }
-  map.addSource('flood',{type:'geojson',data:FLOOD});
-  map.addLayer({id:'flood',type:'fill-extrusion',source:'flood',layout:{visibility:'none'},paint:{
-    'fill-extrusion-color':['interpolate',['linear'],['get','d'],0.5,'#8ecae6',1.5,'#4aa3d8',2.5,'#1f6fb5'],
-    'fill-extrusion-height':['*',['get','d'],0],'fill-extrusion-base':0,'fill-extrusion-opacity':0.6}});
+  map.addSource('flood',{type:'canvas',canvas:'floodcv',animate:true,coordinates:[[FB.w,FB.n],[FB.e,FB.n],[FB.e,FB.s],[FB.w,FB.s]]});
+  map.addLayer({id:'flood',type:'raster',source:'flood',layout:{visibility:'none'},paint:{'raster-opacity':0.8,'raster-resampling':'linear','raster-fade-duration':0}},BORIG||undefined);
+  map.getSource('flood').pause();
   map.addSource('st',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addLayer({id:'st-dots',type:'circle',source:'st',paint:{
     'circle-radius':9,'circle-stroke-color':'#fff','circle-stroke-width':2,
@@ -257,7 +335,7 @@ async function loadStations(){
     stations=list;await ready;
     map.getSource('st').setData({type:'FeatureCollection',features:stations.map(s=>({type:'Feature',
       geometry:{type:'Point',coordinates:[s.lng,s.lat]},properties:{name:s.name,river:s.river,margin:s.margin,time:s.time,status:s.status}}))});
-    $('stamp').textContent='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' · น้ำ: สสน./ชป. · ฝน: Open-Meteo, RainViewer · ปรับสี '+(window.paintN||0)+' ชั้น';
+    $('stamp').textContent='อัปเดต '+new Date().toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})+' · น้ำ: สสน./ชป. · ฝน: Open-Meteo, RainViewer · กล้องน้ำ: HatyaiCityClimate.org';
   }catch(e){$('stamp').textContent='โหลดข้อมูลสถานีวัดน้ำไม่สำเร็จ (แผนที่และเรดาร์ยังใช้ได้) จะลองใหม่ใน 5 นาที';}
 }
 
